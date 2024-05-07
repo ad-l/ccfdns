@@ -7,7 +7,8 @@ function toHex(a){
 
 browser.tabs.query({active:true,currentWindow:true}).then(async tabs => {
   const url = new URL(tabs[0].url);
-  let info = ext.cache[url.hostname]; 
+  let info = ext.cache[url.hostname];
+  if(!info) return;
   let claims = info.claims[0].sgx_claims;
 
   let ns = url.hostname.split(".");

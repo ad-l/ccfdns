@@ -1,5 +1,9 @@
 "use strict";
 
+// If set to true, DoH to dns.google is used instead of the local resolver
+// This is more private and may be faster depending on local resolver
+const USE_DOH = true;
+
 // Cache verification for one hour 
 const CACHE_TIME = 1000 * 5; // 60 * 60; set to 5s for demo
 var cache = {}
@@ -74,8 +78,8 @@ async function getFragmentedAAAA(name, comp = false) {
       console.log(`Looking up _${i}.${name}`);
       let oldt = t;
 
-      //const response = await fetch(`https://dns.google/resolve?name=${url.hostname}&type=A&do=1`);
       const response = await browser.dns.resolve(`_${i}.${name}`,["disable_ipv4"]);
+      console.log("Got "+JSON.stringify(response))
 
       // This may be unnecessary if the browser's DNS is checking the RRsig
       // the list will be signed by the aDNS server already sorted
@@ -112,7 +116,58 @@ async function getFragmentedAAAA(name, comp = false) {
   }
 }
 
+/*
+Perform DNS query either using a public DoH resolver or using
+the internal browser resolver.
+*/
+async function queryDNS(name, type)
+{
+  if(USE_DOH)
+  {
+    if(type == "ATTEST")
+    {
+      console.log("Requesting "+name)
+      const q = await fetch(`https://dns.google/resolve?name=${name}&type=3771&do=1`);
+      const response = await q.json();
+      if(!response.Answer) return false;
+      let attest = response.Answer.filter(x => {return x.type == 32771});
+      if(!attest.length){
+        console.dir(response);
+        return false;
+      }
+      console.dir(attest[0]);
+      let hex = Uint8Array.from(attest[0].data.split(" ")[2].match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
+      //console.dir(hex);
+      return pako.inflate(hex);
+    }
+    if(type == "TLSA")
+    {
+      console.log("Requesting "+name)
+      const q = await fetch(`https://dns.google/resolve?name=${name}&type=TLSA&do=1`);
+      const response = await q.json();
+      if(!response.Answer) return false;
+      let tlsa = response.Answer.filter(x => {return x.type == 52});
+      if(!tlsa.length){
+        console.dir(response);
+        return false;
+      }
+      console.dir(tlsa[0]);
+      let hex = Uint8Array.from(tlsa[0].data.split(" ")[3].match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
+      //console.dir(hex);
+      return hex;
+    }
+  } else {
+    // Transform custom request types into AAAA fragments
+    if(type == "TLSA")
+      return getFragmentedAAAA(`${name}`);
+    if(type == "ATTEST")
+      return getFragmentedAAAA(`attest.${url.hostname}`, true);
+    return browser.dns.resolve(`${name}`,[]);
+  }
+}
+
 async function validateAttestation(alist){
+  if(typeof alist != "object" || !alist.buffer) return [];
   let quotes = CBOR.decode(alist.buffer);
   let res = [];
   if(!Array.isArray(quotes)) quotes = [quotes];
@@ -135,9 +190,9 @@ async function validateAttestation(alist){
 
 async function validateRequest(details){
   let url = new URL(details.url);
-  browser.pageAction.show(details.tabId)
+  //browser.pageAction.show(details.tabId)
 
-  if(url.port == 8443) return {};
+  //if(url.port == 8443) return {};
   // We have recently verified the attestation of this domain
   if(cache[url.hostname] && cache[url.hostname].time >= Date.now() + CACHE_TIME)
   {
@@ -146,15 +201,22 @@ async function validateRequest(details){
   }
 
   let start = Date.now();
-  let tlsa = await getFragmentedAAAA(`_443._tcp.${url.hostname}`);
-  let attest = await getFragmentedAAAA(`attest.${url.hostname}`, true);
-  let valid = await validateAttestation(attest);
+  let tlsa = await queryDNS(`_443._tcp.${url.hostname}`, "TLSA");
+  console.log("TLSA time "+(Date.now()-start)); start=Date.now();
 
-  if(!tlsa)
+  let attest = await queryDNS(`${url.hostname}`, "ATTEST");
+  console.log("ATTEST time "+(Date.now()-start)); start=Date.now();
+
+  if(!tlsa) {
     return errorPage(url.hostname, "Error resolving TLSA record");
+  }
 
-  if(!attest)
+  if(!attest){
     return errorPage(url.hostname, "Error resolving ATTEST record");
+  }
+
+  let valid = await validateAttestation(attest);
+  console.log("Attest check time "+(Date.now()-start)); start=Date.now();
 
   // We only require any one of the attestations to validate
   if(!valid.length)
@@ -178,6 +240,42 @@ async function validateRequest(details){
 
   return {};
 }
+
+async function updateIcon(o)
+{
+  //console.log("Update icon "+o)
+  if(o.endsWith(".attested.name"))
+  {
+    const trusted = typeof cache[o] == "object";
+    return await chrome.browserAction.setIcon({path:"icons/"+(trusted ? "attested" : "danger")+".png"});
+  }
+  if(o == new URL(chrome.runtime.getURL(".")).hostname)
+  {
+    return await chrome.browserAction.setIcon({path:"icons/danger.png"});
+  }
+  await chrome.browserAction.setIcon({path: "icons/action.png"});
+}
+
+async function handleTabChange () {
+  let tabs = await browser.tabs.query({active: true, currentWindow: true});
+  if(!tabs.length || !tabs[0].url) return;
+  try {
+    let u = new URL(tabs[0].url);
+    updateIcon(u.hostname);
+  }catch(e){}
+}
+
+// listen to tab URL changes
+browser.tabs.onUpdated.addListener(handleTabChange)
+
+// listen to tab switching
+browser.tabs.onActivated.addListener(handleTabChange)
+
+// listen for window switching
+browser.windows.onFocusChanged.addListener(handleTabChange)
+
+// update when the extension loads initially
+handleTabChange()
 
 browser.webRequest.onHeadersReceived.addListener(checkConnection,
   {urls: ["*://*.attested.name/*"]},

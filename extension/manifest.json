@@ -3,19 +3,26 @@
   "name": "Attested DNS",
   "description": "Verify remote attestation using attested DNS when connecting to confidential computing websites",
   "version": "1.0",
-  "page_action": {
-    "default_icon": {
-      "32": "icons/icon-32.png"
-    },
+  "browser_action": {
+    "default_icon": "icons/action.png",
     "default_title": "Attested DNS Information",
     "default_popup": "popup.html"
   },
-  "permissions": ["dns", "xmlhttprequest", "tabs", "webRequest", "webRequestBlocking", "https://*.trustedservices.intel.com/*", "*://*.attested.name/*"],
+  "permissions": [
+    "dns",
+    "xmlhttprequest",
+    "tabs",
+    "activeTab",
+    "webRequest",
+    "webRequestBlocking",
+    "https://*.trustedservices.intel.com/*",
+     "*://*.attested.name/*"
+  ],
   "background": {
     "scripts": ["pako.min.js", "cbor.js", "ravl.js", "background.js" ]
   },
   "web_accessible_resources": [
-    "blocked.html", "jquery.js"
+    "icons/*", "blocked.html", "jquery.js"
   ],
   "icons": {
     "32": "icons/icon-32.png"
