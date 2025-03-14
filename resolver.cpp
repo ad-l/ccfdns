@@ -1617,6 +1617,8 @@ namespace aDNS
     using namespace RFC7671; 
     using namespace RFC8659; 
 
+    CCF_APP_INFO("ADNS: In register service\n");
+
     auto configuration = get_configuration();
 
     std::string csrtxt(rr.csr.begin(), rr.csr.end());
@@ -1794,8 +1796,18 @@ namespace aDNS
 
     if (endorsements)
       save_endorsements(service_name, compress(*endorsements, 9));
+    
+    //TODO: the code below should be modified to include both branches,
+    //depending on which type of service (frontend/backend) is being registered.
+    //TODO: for frontend service, we need to return an array of two certificates.
 
-    start_service_acme(origin, service_name, rr.csr, rr.contact);
+    //flow for aDNS as root CA
+    CCF_APP_INFO("ADNS: Going to generate a leaf cert\n");
+    generate_leaf_certificate(service_name, rr.csr);
+
+    //flow for ACME-based CA 
+    // start_service_acme(origin, service_name, rr.csr, rr.contact);
+    
   }
 
   void Resolver::install_acme_response(
